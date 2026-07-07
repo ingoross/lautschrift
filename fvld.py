@@ -60,6 +60,25 @@ _KEYCODES = {  # Linux input-event-Codes (layout-neutral)
     "v": 47, "insert": 110,
 }
 
+# Start-/Stopp-Töne (wie bei FluidVoice). Über FVL_SOUND_* überschreibbar.
+_FD = "/usr/share/sounds/freedesktop/stereo"
+SOUND_START = os.environ.get("FVL_SOUND_START", f"{_FD}/message-new-instant.oga")
+SOUND_STOP = os.environ.get("FVL_SOUND_STOP", f"{_FD}/complete.oga")
+
+
+def play_sound(path: str) -> None:
+    if not path or not os.path.exists(path):
+        return
+    try:
+        subprocess.Popen(["pw-play", path],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        try:
+            subprocess.Popen(["paplay", path],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            pass
+
 
 # --- STT ------------------------------------------------------------------
 class Engine:
@@ -98,10 +117,13 @@ class Engine:
 
 # --- Overlay --------------------------------------------------------------
 CSS = b"""
-.fvl-box { background: rgba(20,20,24,0.92); border-radius: 16px;
-           padding: 18px 24px; }
+/* Fenster selbst transparent -> hinter den runden Ecken sieht man den Desktop */
+window.fvl-win { background: transparent; }
+.fvl-box { background: rgba(20,20,24,0.94); border-radius: 18px;
+           padding: 18px 24px; margin: 14px;
+           box-shadow: 0 10px 30px rgba(0,0,0,0.55); }
 .fvl-title { color: #7aa2ff; font-weight: 700; font-size: 13px; }
-.fvl-text { color: #f0f0f4; font-size: 22px; }
+.fvl-text { color: #f0f0f4; font-size: 15px; }
 .fvl-rec { color: #ff5f6d; font-weight: 700; }
 """
 
@@ -110,6 +132,7 @@ class Overlay:
     def __init__(self, app: Gtk.Application) -> None:
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_decorated(False)
+        self.win.add_css_class("fvl-win")
         self.win.set_default_size(560, 0)
         self.win.set_resizable(False)
         try:
@@ -219,6 +242,7 @@ class Daemon:
     def _start(self) -> None:
         self.recording = True
         self.stop_flag.clear()
+        play_sound(SOUND_START)
         WAV.unlink(missing_ok=True)
         self.rec_proc = subprocess.Popen(
             ["pw-record", "--rate", str(SAMPLE_RATE), "--channels", "1",
@@ -232,6 +256,7 @@ class Daemon:
     def _stop(self) -> None:
         self.recording = False
         self.stop_flag.set()
+        play_sound(SOUND_STOP)
         if self.rec_proc:
             try:
                 self.rec_proc.send_signal(signal.SIGINT)
