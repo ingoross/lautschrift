@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Modelle (groß, per scripts/download-model.sh laden)
+models/
+!models/.gitkeep
+
+# Laufzeit
+*.wav
