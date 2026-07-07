@@ -125,6 +125,7 @@ window.fvl-win { background: transparent; }
 .fvl-title { color: #7aa2ff; font-weight: 700; font-size: 13px; }
 .fvl-text { color: #f0f0f4; font-size: 15px; }
 .fvl-rec { color: #ff5f6d; font-weight: 700; }
+.fvl-proc { color: #7aa2ff; font-weight: 700; }
 """
 
 
@@ -149,28 +150,51 @@ class Overlay:
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.add_css_class("fvl-box")
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.spinner = Gtk.Spinner()
+        self.spinner.set_visible(False)
         self.title = Gtk.Label(label="●  Aufnahme läuft …")
         self.title.add_css_class("fvl-title")
         self.title.add_css_class("fvl-rec")
         self.title.set_xalign(0)
+        header.append(self.spinner)
+        header.append(self.title)
         self.text = Gtk.Label(label="")
         self.text.add_css_class("fvl-text")
         self.text.set_xalign(0)
         self.text.set_wrap(True)
         self.text.set_max_width_chars(46)
-        box.append(self.title)
+        box.append(header)
         box.append(self.text)
         self.win.set_child(box)
 
-    def show(self) -> None:
+    def show_recording(self) -> bool:
         self.text.set_text("")
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        self.title.set_text("●  Aufnahme läuft …")
+        self.title.remove_css_class("fvl-proc")
+        self.title.add_css_class("fvl-rec")
         self.win.present()
+        return False
 
-    def hide(self) -> None:
+    def show_processing(self) -> bool:
+        self.spinner.set_visible(True)
+        self.spinner.start()
+        self.title.set_text("Transkribiere …")
+        self.title.remove_css_class("fvl-rec")
+        self.title.add_css_class("fvl-proc")
+        self.win.present()
+        return False
+
+    def hide(self) -> bool:
+        self.spinner.stop()
         self.win.set_visible(False)
+        return False
 
-    def set_text(self, s: str) -> None:
+    def set_text(self, s: str) -> bool:
         self.text.set_text(s or "…")
+        return False
 
 
 # --- Daemon ---------------------------------------------------------------
@@ -249,7 +273,7 @@ class Daemon:
              "--format", "s16", str(WAV)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        self.overlay.show()
+        self.overlay.show_recording()
         self.decode_thread = threading.Thread(target=self._live_decode, daemon=True)
         self.decode_thread.start()
 
@@ -257,6 +281,8 @@ class Daemon:
         self.recording = False
         self.stop_flag.set()
         play_sound(SOUND_STOP)
+        # Overlay sichtbar lassen und auf "Transkribiere …" (Spinner) umschalten
+        self.overlay.show_processing()
         if self.rec_proc:
             try:
                 self.rec_proc.send_signal(signal.SIGINT)
@@ -264,8 +290,7 @@ class Daemon:
             except Exception:
                 pass
             self.rec_proc = None
-        self.overlay.hide()
-        # Finaltext in eigenem Thread (blockiert GTK nicht)
+        # Finaltext in eigenem Thread (blockiert GTK nicht -> Spinner läuft)
         threading.Thread(target=self._finalize, daemon=True).start()
 
     # ---- Live-Dekodierung ----
@@ -305,6 +330,7 @@ class Daemon:
             samples = self._read_samples()
         text = self.engine.decode(samples)
         if not text:
+            GLib.idle_add(self.overlay.hide)
             self._notify("⚠️  Nichts erkannt.")
             return
         out = text + (" " if TRAILING_SPACE else "")
@@ -314,8 +340,9 @@ class Daemon:
             subprocess.run(["wl-copy", "--primary"], input=out.encode(), check=False)
         except FileNotFoundError:
             pass
-        # 2) ins fokussierte Feld einfügen (Paste-Kürzel, kurze Pause für Fokus)
-        time.sleep(0.15)
+        # 2) Overlay ausblenden (Fokus zurück ins Zielfeld), dann einfügen
+        GLib.idle_add(self.overlay.hide)
+        time.sleep(0.2)
         self._paste()
         print(f"[fvld] -> {text}", flush=True)
 
