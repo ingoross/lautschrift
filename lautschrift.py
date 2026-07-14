@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""FluidVoice Lite Daemon — OS-weites Diktat für Linux/Wayland.
+"""Lautschrift daemon — system-wide local dictation for Linux/Wayland.
 
-- Hotkey: Copilot-Taste (sendet Meta+Shift+F23; wir triggern auf F23/Code 193)
-  1x = Aufnahme an, 2x = Aufnahme aus.
-- STT: Parakeet TDT 0.6B v3 (int8, sherpa-onnx) — identisch zu FluidVoice.
-- Live-Overlay: kleines GTK-Fenster zeigt den Text beim Sprechen (Puffer wird
-  alle ~0,8 s neu dekodiert — der Offline-Parakeet kann kein echtes Streaming,
-  das Neu-Dekodieren wirkt aber live).
-- Bei Stopp: fertiger Text -> Zwischenablage (wl-copy) UND ins fokussierte
-  Feld getippt (wtype).
+- Hotkey: Copilot key by default (sends Meta+Shift+F23; we trigger on
+  F23/code 193). Press once to start recording, press again to stop.
+- STT: NVIDIA Parakeet TDT 0.6B v3 (int8, via sherpa-onnx) — fully offline,
+  25 European languages, automatic language detection.
+- Live overlay: a small GTK window shows the text while you speak (the
+  audio buffer is re-decoded every ~0.8 s — the offline Parakeet model
+  cannot truly stream, but re-decoding feels live).
+- On stop: the final text goes to the clipboard (wl-copy) AND is pasted
+  into the focused field (ydotool).
 
-Global lauffähig, weil wir die Tastatur direkt über evdev lesen (User in
-Gruppe 'input'). Start:  .venv/bin/python fvld.py
+Works across compositors because the keyboard is read directly via evdev
+(user must be in the 'input' group). Start:  .venv/bin/python lautschrift.py
 """
 from __future__ import annotations
 
 import os
 import selectors
+import shutil
 import signal
 import subprocess
 import threading
@@ -32,55 +34,67 @@ from gi.repository import GLib, Gtk, Gdk  # noqa: E402
 
 from evdev import InputDevice, list_devices, ecodes  # noqa: E402
 
-# --- Konfiguration --------------------------------------------------------
+APP_NAME = "Lautschrift"
+
+# --- Configuration ----------------------------------------------------------
 HERE = Path(__file__).resolve().parent
-MODEL_DIR = Path(os.environ.get("FVL_MODEL_DIR", HERE / "models" / "parakeet-v3"))
-RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "fluidvoice-lite"
+MODEL_DIR = Path(os.environ.get("LAUT_MODEL_DIR", HERE / "models" / "parakeet-v3"))
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "lautschrift"
 RUNTIME.mkdir(parents=True, exist_ok=True)
 WAV = RUNTIME / "rec.wav"
 
-TRIGGER_CODE = int(os.environ.get("FVL_TRIGGER_CODE", ecodes.KEY_F23))  # 193
-NUM_THREADS = int(os.environ.get("FVL_THREADS", "6"))
-DECODE_INTERVAL = float(os.environ.get("FVL_DECODE_INTERVAL", "0.8"))
-TRAILING_SPACE = os.environ.get("FVL_TRAILING_SPACE", "1") == "1"
+TRIGGER_CODE = int(os.environ.get("LAUT_TRIGGER_CODE", ecodes.KEY_F23))  # 193
+NUM_THREADS = int(os.environ.get("LAUT_THREADS", "6"))
+DECODE_INTERVAL = float(os.environ.get("LAUT_DECODE_INTERVAL", "0.8"))
+TRAILING_SPACE = os.environ.get("LAUT_TRAILING_SPACE", "1") == "1"
 SAMPLE_RATE = 16000
 
-# ydotool injiziert auf Kernel-Ebene (/dev/uinput) — funktioniert auf GNOME
-# Wayland, wo wtype (virtual-keyboard-Protokoll) scheitert.
+# ydotool injects at the kernel level (/dev/uinput) — works on GNOME
+# Wayland, where wtype (virtual-keyboard protocol) fails.
 YDOTOOL_SOCKET = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket"
 )
-# Textausgabe: Zwischenablage + Einfüge-Kürzel (layout-unabhängig, exakte
-# Umlaute). ydotool "type" scheitert am de-Layout (y/z vertauscht, Umlaute
-# verschluckt), deshalb Paste statt Tippen.
-# Terminals brauchen meist ctrl+shift+v, GUI-Apps ctrl+v.
-PASTE_KEY = os.environ.get("FVL_PASTE_KEY", "ctrl+v")
-_KEYCODES = {  # Linux input-event-Codes (layout-neutral)
+# Text output: clipboard + paste shortcut (layout-independent, exact
+# Unicode). ydotool "type" breaks on non-US layouts (y/z swapped, umlauts
+# dropped), hence paste instead of typing.
+# Terminals usually need ctrl+shift+v, GUI apps ctrl+v.
+PASTE_KEY = os.environ.get("LAUT_PASTE_KEY", "ctrl+v")
+_KEYCODES = {  # Linux input-event codes (layout-neutral)
     "ctrl": 29, "shift": 42, "alt": 56, "super": 125,
     "v": 47, "insert": 110,
 }
 
-# Start-/Stopp-Töne (wie bei FluidVoice). Über FVL_SOUND_* überschreibbar.
+# Start/stop sounds (freedesktop sound theme). Override via LAUT_SOUND_*.
 _FD = "/usr/share/sounds/freedesktop/stereo"
-SOUND_START = os.environ.get("FVL_SOUND_START", f"{_FD}/message-new-instant.oga")
-SOUND_STOP = os.environ.get("FVL_SOUND_STOP", f"{_FD}/complete.oga")
+SOUND_START = os.environ.get("LAUT_SOUND_START", f"{_FD}/message-new-instant.oga")
+SOUND_STOP = os.environ.get("LAUT_SOUND_STOP", f"{_FD}/complete.oga")
 
 
 def play_sound(path: str) -> None:
     if not path or not os.path.exists(path):
         return
-    try:
-        subprocess.Popen(["pw-play", path],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        try:
-            subprocess.Popen(["paplay", path],
+    for player in ("pw-play", "paplay"):
+        if shutil.which(player):
+            subprocess.Popen([player, path],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except FileNotFoundError:
-            pass
+            return
 
 
-# --- STT ------------------------------------------------------------------
+def record_command(wav: str) -> list[str]:
+    """Recorder CLI: PipeWire (pw-record) preferred, PulseAudio as fallback."""
+    if shutil.which("pw-record"):
+        return ["pw-record", "--rate", str(SAMPLE_RATE), "--channels", "1",
+                "--format", "s16", wav]
+    if shutil.which("parecord"):
+        return ["parecord", f"--rate={SAMPLE_RATE}", "--channels=1",
+                "--format=s16le", "--file-format=wav", wav]
+    raise FileNotFoundError(
+        "no audio recorder found — install pipewire-utils (pw-record) "
+        "or pulseaudio-utils (parecord)"
+    )
+
+
+# --- STT --------------------------------------------------------------------
 class Engine:
     def __init__(self) -> None:
         import sherpa_onnx
@@ -90,7 +104,9 @@ class Engine:
                 p = MODEL_DIR / n
                 if p.exists():
                     return str(p)
-            raise FileNotFoundError(f"{names} nicht in {MODEL_DIR}")
+            raise FileNotFoundError(
+                f"{names} not found in {MODEL_DIR} — run scripts/download-model.sh"
+            )
 
         self.rec = sherpa_onnx.OfflineRecognizer.from_transducer(
             encoder=pick("encoder.int8.onnx", "encoder.onnx"),
@@ -115,17 +131,17 @@ class Engine:
             return stream.result.text.strip()
 
 
-# --- Overlay --------------------------------------------------------------
+# --- Overlay ----------------------------------------------------------------
 CSS = b"""
-/* Fenster selbst transparent -> hinter den runden Ecken sieht man den Desktop */
-window.fvl-win { background: transparent; }
-.fvl-box { background: rgba(20,20,24,0.94); border-radius: 18px;
-           padding: 18px 24px; margin: 14px;
-           box-shadow: 0 10px 30px rgba(0,0,0,0.55); }
-.fvl-title { color: #7aa2ff; font-weight: 700; font-size: 13px; }
-.fvl-text { color: #f0f0f4; font-size: 15px; }
-.fvl-rec { color: #ff5f6d; font-weight: 700; }
-.fvl-proc { color: #7aa2ff; font-weight: 700; }
+/* Transparent window -> the desktop shows through behind the rounded corners */
+window.laut-win { background: transparent; }
+.laut-box { background: rgba(20,20,24,0.94); border-radius: 18px;
+            padding: 18px 24px; margin: 14px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.55); }
+.laut-title { color: #7aa2ff; font-weight: 700; font-size: 13px; }
+.laut-text { color: #f0f0f4; font-size: 15px; }
+.laut-rec { color: #ff5f6d; font-weight: 700; }
+.laut-proc { color: #7aa2ff; font-weight: 700; }
 """
 
 
@@ -133,7 +149,7 @@ class Overlay:
     def __init__(self, app: Gtk.Application) -> None:
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_decorated(False)
-        self.win.add_css_class("fvl-win")
+        self.win.add_css_class("laut-win")
         self.win.set_default_size(560, 0)
         self.win.set_resizable(False)
         try:
@@ -149,18 +165,18 @@ class Overlay:
         )
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.add_css_class("fvl-box")
+        box.add_css_class("laut-box")
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.spinner = Gtk.Spinner()
         self.spinner.set_visible(False)
-        self.title = Gtk.Label(label="●  Aufnahme läuft …")
-        self.title.add_css_class("fvl-title")
-        self.title.add_css_class("fvl-rec")
+        self.title = Gtk.Label(label="●  Recording …")
+        self.title.add_css_class("laut-title")
+        self.title.add_css_class("laut-rec")
         self.title.set_xalign(0)
         header.append(self.spinner)
         header.append(self.title)
         self.text = Gtk.Label(label="")
-        self.text.add_css_class("fvl-text")
+        self.text.add_css_class("laut-text")
         self.text.set_xalign(0)
         self.text.set_wrap(True)
         self.text.set_max_width_chars(46)
@@ -172,18 +188,18 @@ class Overlay:
         self.text.set_text("")
         self.spinner.stop()
         self.spinner.set_visible(False)
-        self.title.set_text("●  Aufnahme läuft …")
-        self.title.remove_css_class("fvl-proc")
-        self.title.add_css_class("fvl-rec")
+        self.title.set_text("●  Recording …")
+        self.title.remove_css_class("laut-proc")
+        self.title.add_css_class("laut-rec")
         self.win.present()
         return False
 
     def show_processing(self) -> bool:
         self.spinner.set_visible(True)
         self.spinner.start()
-        self.title.set_text("Transkribiere …")
-        self.title.remove_css_class("fvl-rec")
-        self.title.add_css_class("fvl-proc")
+        self.title.set_text("Transcribing …")
+        self.title.remove_css_class("laut-rec")
+        self.title.add_css_class("laut-proc")
         self.win.present()
         return False
 
@@ -197,7 +213,7 @@ class Overlay:
         return False
 
 
-# --- Daemon ---------------------------------------------------------------
+# --- Daemon -----------------------------------------------------------------
 class Daemon:
     def __init__(self) -> None:
         self.engine = Engine()
@@ -205,15 +221,15 @@ class Daemon:
         self.rec_proc: subprocess.Popen | None = None
         self.decode_thread: threading.Thread | None = None
         self.stop_flag = threading.Event()
-        self.app = Gtk.Application(application_id="de.unfuture.fluidvoicelite")
+        self.app = Gtk.Application(application_id="de.unfuture.lautschrift")
         self.app.connect("activate", self._on_activate)
 
     # ---- GTK lifecycle ----
     def _on_activate(self, app: Gtk.Application) -> None:
         self.overlay = Overlay(app)
-        app.hold()  # ohne sichtbares Fenster am Leben bleiben
+        app.hold()  # stay alive without a visible window
         threading.Thread(target=self._key_loop, daemon=True).start()
-        print("[fvld] bereit. Copilot-Taste drücken zum Diktieren.", flush=True)
+        print("[lautschrift] ready. Press the hotkey to dictate.", flush=True)
 
     # ---- Hotkey (evdev, global) ----
     def _key_loop(self) -> None:
@@ -226,7 +242,7 @@ class Daemon:
                     devs.append(d)
             except Exception:
                 pass
-        # Fallback: alle Tastaturen
+        # Fallback: all keyboards
         if not devs:
             for path in list_devices():
                 try:
@@ -237,9 +253,11 @@ class Daemon:
                 except Exception:
                     pass
         if not devs:
-            print("[fvld] keine Tastatur gefunden (input-Gruppe?)", flush=True)
+            print("[lautschrift] no keyboard found (is the user in the "
+                  "'input' group?)", flush=True)
             return
-        print(f"[fvld] lausche auf {len(devs)} Tastatur(en) für Code {TRIGGER_CODE}", flush=True)
+        print(f"[lautschrift] listening on {len(devs)} keyboard(s) for "
+              f"keycode {TRIGGER_CODE}", flush=True)
 
         sel = selectors.DefaultSelector()
         for d in devs:
@@ -250,7 +268,7 @@ class Daemon:
                 for ev in key.fileobj.read():
                     if ev.type == ecodes.EV_KEY and ev.code == TRIGGER_CODE and ev.value == 1:
                         now = time.monotonic()
-                        if now - last < 0.3:  # Entprellen
+                        if now - last < 0.3:  # debounce
                             continue
                         last = now
                         GLib.idle_add(self.toggle)
@@ -261,17 +279,20 @@ class Daemon:
             self._start()
         else:
             self._stop()
-        return False  # idle_add: nicht wiederholen
+        return False  # idle_add: do not repeat
 
     def _start(self) -> None:
+        try:
+            cmd = record_command(str(WAV))
+        except FileNotFoundError as e:
+            self._notify(f"⚠️  {e}")
+            return
         self.recording = True
         self.stop_flag.clear()
         play_sound(SOUND_START)
         WAV.unlink(missing_ok=True)
         self.rec_proc = subprocess.Popen(
-            ["pw-record", "--rate", str(SAMPLE_RATE), "--channels", "1",
-             "--format", "s16", str(WAV)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         self.overlay.show_recording()
         self.decode_thread = threading.Thread(target=self._live_decode, daemon=True)
@@ -281,7 +302,7 @@ class Daemon:
         self.recording = False
         self.stop_flag.set()
         play_sound(SOUND_STOP)
-        # Overlay sichtbar lassen und auf "Transkribiere …" (Spinner) umschalten
+        # Keep the overlay visible and switch to "Transcribing …" (spinner)
         self.overlay.show_processing()
         if self.rec_proc:
             try:
@@ -290,10 +311,10 @@ class Daemon:
             except Exception:
                 pass
             self.rec_proc = None
-        # Finaltext in eigenem Thread (blockiert GTK nicht -> Spinner läuft)
+        # Final decode in its own thread (does not block GTK -> spinner runs)
         threading.Thread(target=self._finalize, daemon=True).start()
 
-    # ---- Live-Dekodierung ----
+    # ---- Live decoding ----
     @staticmethod
     def _read_samples() -> np.ndarray:
         try:
@@ -313,13 +334,13 @@ class Daemon:
             if self.stop_flag.is_set():
                 break
             samples = self._read_samples()
-            if samples.size < SAMPLE_RATE // 4:  # <0,25s ignorieren
+            if samples.size < SAMPLE_RATE // 4:  # ignore <0.25 s
                 continue
             text = self.engine.decode(samples)
             GLib.idle_add(self.overlay.set_text, text)
 
     def _finalize(self) -> None:
-        # sauber finalisierte Datei lesen
+        # Read the cleanly finalized file
         samples = np.zeros(0, np.float32)
         try:
             with wave.open(str(WAV), "rb") as wf:
@@ -331,24 +352,24 @@ class Daemon:
         text = self.engine.decode(samples)
         if not text:
             GLib.idle_add(self.overlay.hide)
-            self._notify("⚠️  Nichts erkannt.")
+            self._notify("⚠️  Nothing recognized.")
             return
         out = text + (" " if TRAILING_SPACE else "")
-        # 1) Zwischenablage (clipboard + primary) — exakter Unicode-Text
+        # 1) Clipboard (clipboard + primary) — exact Unicode text
         try:
             subprocess.run(["wl-copy"], input=out.encode(), check=False)
             subprocess.run(["wl-copy", "--primary"], input=out.encode(), check=False)
         except FileNotFoundError:
             pass
-        # 2) Overlay ausblenden (Fokus zurück ins Zielfeld), dann einfügen
+        # 2) Hide the overlay (focus returns to the target field), then paste
         GLib.idle_add(self.overlay.hide)
         time.sleep(0.2)
         self._paste()
-        print(f"[fvld] -> {text}", flush=True)
+        print(f"[lautschrift] -> {text}", flush=True)
 
     def _ensure_ydotoold(self) -> bool:
-        """ydotoold-Daemon sicherstellen (öffnet /dev/uinput, kein Root nötig,
-        da wir in Gruppe 'input' sind)."""
+        """Make sure the ydotoold daemon runs (opens /dev/uinput; no root
+        needed if the user may write to /dev/uinput, see install.sh)."""
         if os.path.exists(YDOTOOL_SOCKET):
             return True
         try:
@@ -358,37 +379,37 @@ class Daemon:
             )
         except FileNotFoundError:
             return False
-        for _ in range(60):  # bis ~3s auf Socket warten
+        for _ in range(60):  # wait up to ~3 s for the socket
             if os.path.exists(YDOTOOL_SOCKET):
-                time.sleep(0.2)  # ydotoold kurz initialisieren lassen
+                time.sleep(0.2)  # let ydotoold initialize briefly
                 return True
             time.sleep(0.05)
         return False
 
     def _paste(self) -> None:
-        """Einfüge-Kürzel injizieren (z.B. ctrl+v). Layout-unabhängig, weil nur
-        Modifier + V als rohe Keycodes gesendet werden; der Text kommt exakt aus
-        der Zwischenablage."""
+        """Inject the paste shortcut (e.g. ctrl+v). Layout-independent since
+        only modifiers + V are sent as raw keycodes; the text itself comes
+        verbatim from the clipboard."""
         if not self._ensure_ydotoold():
-            self._notify("ydotool(d) fehlt — Text nur in Zwischenablage.")
+            self._notify("ydotool(d) missing — text is in the clipboard only.")
             return
         try:
             codes = [_KEYCODES[k] for k in PASTE_KEY.lower().split("+")]
         except KeyError:
-            self._notify(f"Unbekanntes Paste-Kürzel: {PASTE_KEY}")
+            self._notify(f"Unknown paste shortcut: {PASTE_KEY}")
             return
         seq = [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
         env = {**os.environ, "YDOTOOL_SOCKET": YDOTOOL_SOCKET}
         try:
             subprocess.run(["ydotool", "key", *seq], env=env, check=False)
         except FileNotFoundError:
-            self._notify("ydotool fehlt — Text nur in Zwischenablage.")
+            self._notify("ydotool missing — text is in the clipboard only.")
 
     @staticmethod
     def _notify(msg: str) -> None:
-        subprocess.run(["notify-send", "-a", "FluidVoice Lite", "FluidVoice Lite", msg],
+        subprocess.run(["notify-send", "-a", APP_NAME, APP_NAME, msg],
                        check=False)
-        print(f"[fvld] {msg}", flush=True)
+        print(f"[lautschrift] {msg}", flush=True)
 
     def run(self) -> int:
         return self.app.run(None)

@@ -3,9 +3,9 @@
 __pycache__/
 *.pyc
 
-# Modelle (groß, per scripts/download-model.sh laden)
+# Models (large — fetched via scripts/download-model.sh)
 models/
 !models/.gitkeep
 
-# Laufzeit
+# Runtime
 *.wav

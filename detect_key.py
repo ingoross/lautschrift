@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Zeigt Tastencodes aller Tastaturen. Drücke die Copilot-Taste (und zum
-Vergleich z.B. die rechte Strg-Taste). Beenden mit Strg+C."""
+"""Shows keycodes of all keyboards. Press your desired hotkey (e.g. the
+Copilot key, and for comparison the right Ctrl key). Quit with Ctrl+C."""
 import sys
 from evdev import InputDevice, list_devices, categorize, ecodes
 
@@ -11,15 +11,15 @@ for path in list_devices():
         caps = d.capabilities()
         if ecodes.EV_KEY in caps and ecodes.KEY_A in caps[ecodes.EV_KEY]:
             kbds.append(d)
-            print(f"lausche: {d.path}  {d.name}", file=sys.stderr)
+            print(f"listening: {d.path}  {d.name}", file=sys.stderr)
     except Exception:
         pass
 
 if not kbds:
-    print("Keine Tastatur gefunden (input-Gruppe aktiv?).", file=sys.stderr)
+    print("No keyboard found (are you in the 'input' group?).", file=sys.stderr)
     sys.exit(1)
 
-print("\n>>> Jetzt die COPILOT-Taste drücken. (Strg+C zum Beenden)\n", file=sys.stderr)
+print("\n>>> Now press your hotkey. (Ctrl+C to quit)\n", file=sys.stderr)
 
 import selectors
 sel = selectors.DefaultSelector()
@@ -37,8 +37,8 @@ try:
                 if ev.value == 1:      # down
                     held.add(name if isinstance(name, str) else name[0])
                     combo = "+".join(sorted(held))
-                    print(f"  DOWN  code={ev.code:<4} {name}   [gehalten: {combo}]")
+                    print(f"  DOWN  code={ev.code:<4} {name}   [held: {combo}]")
                 elif ev.value == 0:    # up
                     held.discard(name if isinstance(name, str) else name[0])
 except KeyboardInterrupt:
-    print("\nfertig.")
+    print("\ndone.")

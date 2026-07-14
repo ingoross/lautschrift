@@ -1,0 +1,21 @@
+[Unit]
+Description=Lautschrift — local dictation daemon (Parakeet TDT v3)
+Documentation=https://github.com/ingoross/lautschrift
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# @DIR@ is replaced with the checkout path by install.sh
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/python -u lautschrift.py
+# Uncomment if WAYLAND_DISPLAY is not imported into your systemd user
+# session (GNOME imports it automatically):
+# Environment=WAYLAND_DISPLAY=wayland-0
+# Paste shortcut used to insert the text (ctrl+shift+v for most terminals):
+# Environment=LAUT_PASTE_KEY=ctrl+v
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

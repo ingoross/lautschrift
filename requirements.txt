@@ -1,5 +1,5 @@
 sherpa-onnx>=1.13.4
 numpy>=2.0
 evdev>=1.9
-# GTK4 / PyGObject kommt vom System (Fedora: python3-gobject, gtk4).
-# Das venv wird mit --system-site-packages angelegt, damit `gi` sichtbar ist.
+# GTK4 / PyGObject comes from the system (see install.sh).
+# The venv is created with --system-site-packages so that `gi` is visible.
