@@ -4,7 +4,7 @@ __pycache__/
 *.pyc
 
 # Models (large — fetched via scripts/download-model.sh)
-models/
+models/*
 !models/.gitkeep
 
 # Runtime
