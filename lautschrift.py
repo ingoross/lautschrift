@@ -20,6 +20,7 @@ import os
 import selectors
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -57,11 +58,19 @@ YDOTOOL_SOCKET = os.path.join(
 # Text output: clipboard + paste shortcut (layout-independent, exact
 # Unicode). ydotool "type" breaks on non-US layouts (y/z swapped, umlauts
 # dropped), hence paste instead of typing.
-# Terminals usually need ctrl+shift+v, GUI apps ctrl+v.
-PASTE_KEY = os.environ.get("LAUT_PASTE_KEY", "ctrl+v")
+#
+# Which shortcut inserts the clipboard differs per app, and terminal TUIs
+# make it worse: they grab ctrl+v/ctrl+shift+v before the terminal can act.
+#   ctrl+v        -> GUI apps; Claude Code pastes, but Codex maps it to
+#                    "paste image" and errors on text-only clipboard.
+#   ctrl+shift+v  -> most terminals' own paste; some GUI apps rebind it.
+#   paste         -> the dedicated Paste key (KEY_PASTE). No TUI grabs it, so
+#                    the terminal (e.g. Ghostty: `keybind = paste=...`) and
+#                    GTK/Qt fields both treat it as "insert". Most robust.
+PASTE_KEY = os.environ.get("LAUT_PASTE_KEY", "paste")
 _KEYCODES = {  # Linux input-event codes (layout-neutral)
     "ctrl": 29, "shift": 42, "alt": 56, "super": 125,
-    "v": 47, "insert": 110,
+    "v": 47, "insert": 110, "paste": 135,
 }
 
 # Start/stop sounds (freedesktop sound theme). Override via LAUT_SOUND_*.
@@ -367,11 +376,32 @@ class Daemon:
         self._paste()
         print(f"[lautschrift] -> {text}", flush=True)
 
+    @staticmethod
+    def _ydotoold_alive() -> bool:
+        """A leftover socket *file* does not mean the daemon lives — ydotoold
+        can die and leave it behind. Probe it: connecting to the (SOCK_DGRAM)
+        socket succeeds while ydotoold is bound and fails with ECONNREFUSED
+        once it is gone, which is exactly how `ydotool` itself detects it."""
+        if not os.path.exists(YDOTOOL_SOCKET):
+            return False
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+                s.settimeout(0.3)
+                s.connect(YDOTOOL_SOCKET)
+            return True
+        except OSError:
+            return False
+
     def _ensure_ydotoold(self) -> bool:
         """Make sure the ydotoold daemon runs (opens /dev/uinput; no root
         needed if the user may write to /dev/uinput, see install.sh)."""
-        if os.path.exists(YDOTOOL_SOCKET):
+        if self._ydotoold_alive():
             return True
+        # Stale socket from a dead daemon blocks re-binding — remove it first.
+        try:
+            os.unlink(YDOTOOL_SOCKET)
+        except FileNotFoundError:
+            pass
         try:
             subprocess.Popen(
                 ["ydotoold", "--socket-path", YDOTOOL_SOCKET, "--socket-perm", "0600"],
@@ -379,9 +409,8 @@ class Daemon:
             )
         except FileNotFoundError:
             return False
-        for _ in range(60):  # wait up to ~3 s for the socket
-            if os.path.exists(YDOTOOL_SOCKET):
-                time.sleep(0.2)  # let ydotoold initialize briefly
+        for _ in range(60):  # wait up to ~3 s for a working socket
+            if self._ydotoold_alive():
                 return True
             time.sleep(0.05)
         return False
@@ -401,9 +430,15 @@ class Daemon:
         seq = [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
         env = {**os.environ, "YDOTOOL_SOCKET": YDOTOOL_SOCKET}
         try:
-            subprocess.run(["ydotool", "key", *seq], env=env, check=False)
+            r = subprocess.run(["ydotool", "key", *seq], env=env,
+                               stderr=subprocess.PIPE)
         except FileNotFoundError:
             self._notify("ydotool missing — text is in the clipboard only.")
+            return
+        if r.returncode != 0:
+            err = r.stderr.decode(errors="replace").strip()
+            self._notify(f"paste failed ({err or 'ydotool error'}) — "
+                         "text is in the clipboard only.")
 
     @staticmethod
     def _notify(msg: str) -> None:

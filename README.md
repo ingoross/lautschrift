@@ -75,7 +75,7 @@ Environment variables (e.g. in the systemd unit):
 | Variable | Default | Purpose |
 |---|---|---|
 | `LAUT_TRIGGER_CODE` | `193` (F23) | evdev keycode of the hotkey — find yours with `detect_key.py` |
-| `LAUT_PASTE_KEY` | `ctrl+v` | paste shortcut (`ctrl+shift+v` for most terminals) |
+| `LAUT_PASTE_KEY` | `paste` | insert key: `paste` (dedicated Paste key — works in terminals *and* GUI, no TUI grabs it), `ctrl+shift+v` (terminals), or `ctrl+v` (GUI only; terminal TUIs like Codex hijack it) |
 | `LAUT_THREADS` | `6` | CPU threads for inference |
 | `LAUT_DECODE_INTERVAL` | `0.8` | seconds between live-overlay updates |
 | `LAUT_TRAILING_SPACE` | `1` | append a space (for continued dictation) |
@@ -104,8 +104,13 @@ Why these building blocks — the hard parts of system-wide Wayland dictation:
 ## Troubleshooting
 
 - **Nothing is pasted, text only in clipboard** — ydotool cannot reach
-  `/dev/uinput`. Run `install.sh` (installs the udev rule) and re-login.
-- **Pasting does nothing in terminals** — set `LAUT_PASTE_KEY=ctrl+shift+v`.
+  `/dev/uinput`. Run `install.sh` (installs the udev rule) and re-login. (If
+  `ydotoold` had died leaving a stale socket, Lautschrift now detects that and
+  respawns it automatically.)
+- **A TUI (e.g. Codex CLI) errors with *"Failed to paste image: no image on
+  clipboard"*** — it binds `ctrl+v` to image paste. The default `paste` key
+  avoids this; if you overrode `LAUT_PASTE_KEY=ctrl+v`, switch back to `paste`
+  (or `ctrl+shift+v`).
 - **Hotkey does not fire** — are you in the `input` group (`id -nG`)? Is the
   keycode right? Check with `.venv/bin/python detect_key.py`.
 - **No `gi` module** — the venv was created without `--system-site-packages`,

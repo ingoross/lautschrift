@@ -12,8 +12,10 @@ ExecStart=@DIR@/.venv/bin/python -u lautschrift.py
 # Uncomment if WAYLAND_DISPLAY is not imported into your systemd user
 # session (GNOME imports it automatically):
 # Environment=WAYLAND_DISPLAY=wayland-0
-# Paste shortcut used to insert the text (ctrl+shift+v for most terminals):
-# Environment=LAUT_PASTE_KEY=ctrl+v
+# Paste shortcut used to insert the text. Terminals / TUIs (Codex CLI etc.)
+# bind ctrl+v to "paste image" — text paste there is ctrl+shift+v. GUI apps
+# use ctrl+v. Pick whichever matches where you dictate most:
+# Environment=LAUT_PASTE_KEY=ctrl+shift+v
 Restart=on-failure
 RestartSec=2
 
