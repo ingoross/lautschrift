@@ -3,6 +3,7 @@
 
 - Hotkey: Copilot key by default (sends Meta+Shift+F23; we trigger on
   F23/code 193). Press once to start recording, press again to stop.
+  Escape cancels recording or pending transcription without pasting.
 - STT: NVIDIA Parakeet TDT 0.6B v3 (int8, via sherpa-onnx) — fully offline,
   25 European languages, automatic language detection.
 - Live overlay: a small GTK window shows the text while you speak (the
@@ -27,10 +28,15 @@ import time
 import wave
 from pathlib import Path
 
+# Select before importing GTK: PyGObject can initialize the display on import.
+# GNOME Wayland has no client API for keep-above. Use its XWayland
+# bridge for the overlay; clipboard and input still target the Wayland session.
+os.environ["GDK_BACKEND"] = "x11"
+
 import numpy as np
 import gi
 
-gi.require_version("Gtk", "4.0")
+gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk, Gdk  # noqa: E402
 
 from evdev import InputDevice, list_devices, ecodes  # noqa: E402
@@ -158,58 +164,68 @@ class Overlay:
     def __init__(self, app: Gtk.Application) -> None:
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_decorated(False)
-        self.win.add_css_class("laut-win")
-        self.win.set_default_size(560, 0)
+        self.win.get_style_context().add_class("laut-win")
+        self.win.set_default_size(560, -1)
+        self.win.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
         self.win.set_resizable(False)
-        try:
-            self.win.set_can_focus(False)
-        except Exception:
-            pass
+        self.win.set_title(APP_NAME)
+        self.win.set_keep_above(True)
+        self.win.set_accept_focus(False)
+        self.win.set_focus_on_map(False)
+        self.win.set_skip_taskbar_hint(True)
+        self.win.set_skip_pager_hint(True)
+        self.win.set_app_paintable(True)
+        visual = self.win.get_screen().get_rgba_visual()
+        if visual:
+            self.win.set_visual(visual)
 
         prov = Gtk.CssProvider()
         prov.load_from_data(CSS)
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), prov,
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), prov,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.add_css_class("laut-box")
+        box.get_style_context().add_class("laut-box")
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.spinner = Gtk.Spinner()
         self.spinner.set_visible(False)
         self.title = Gtk.Label(label="●  Recording …")
-        self.title.add_css_class("laut-title")
-        self.title.add_css_class("laut-rec")
+        self.title.get_style_context().add_class("laut-title")
+        self.title.get_style_context().add_class("laut-rec")
         self.title.set_xalign(0)
-        header.append(self.spinner)
-        header.append(self.title)
+        header.pack_start(self.spinner, False, False, 0)
+        header.pack_start(self.title, True, True, 0)
         self.text = Gtk.Label(label="")
-        self.text.add_css_class("laut-text")
+        self.text.get_style_context().add_class("laut-text")
         self.text.set_xalign(0)
-        self.text.set_wrap(True)
+        self.text.set_line_wrap(True)
         self.text.set_max_width_chars(46)
-        box.append(header)
-        box.append(self.text)
-        self.win.set_child(box)
+        box.pack_start(header, False, False, 0)
+        box.pack_start(self.text, True, True, 0)
+        self.win.add(box)
+        box.show_all()
+        self.spinner.hide()
 
     def show_recording(self) -> bool:
         self.text.set_text("")
         self.spinner.stop()
         self.spinner.set_visible(False)
         self.title.set_text("●  Recording …")
-        self.title.remove_css_class("laut-proc")
-        self.title.add_css_class("laut-rec")
-        self.win.present()
+        self.title.get_style_context().remove_class("laut-proc")
+        self.title.get_style_context().add_class("laut-rec")
+        self.win.show()
+        self.win.set_keep_above(True)
         return False
 
     def show_processing(self) -> bool:
         self.spinner.set_visible(True)
         self.spinner.start()
         self.title.set_text("Transcribing …")
-        self.title.remove_css_class("laut-rec")
-        self.title.add_css_class("laut-proc")
-        self.win.present()
+        self.title.get_style_context().remove_class("laut-rec")
+        self.title.get_style_context().add_class("laut-proc")
+        self.win.show()
         return False
 
     def hide(self) -> bool:
@@ -227,6 +243,9 @@ class Daemon:
     def __init__(self) -> None:
         self.engine = Engine()
         self.recording = False
+        self.processing = False
+        self.session = 0
+        self.wav = WAV
         self.rec_proc: subprocess.Popen | None = None
         self.decode_thread: threading.Thread | None = None
         self.stop_flag = threading.Event()
@@ -246,21 +265,14 @@ class Daemon:
         for path in list_devices():
             try:
                 d = InputDevice(path)
-                caps = d.capabilities()
-                if ecodes.EV_KEY in caps and TRIGGER_CODE in caps[ecodes.EV_KEY]:
+                keys = d.capabilities().get(ecodes.EV_KEY, [])
+                # Escape may live on a different device than the Copilot key.
+                if TRIGGER_CODE in keys or ecodes.KEY_ESC in keys:
                     devs.append(d)
-            except Exception:
+                else:
+                    d.close()
+            except OSError:
                 pass
-        # Fallback: all keyboards
-        if not devs:
-            for path in list_devices():
-                try:
-                    d = InputDevice(path)
-                    caps = d.capabilities()
-                    if ecodes.EV_KEY in caps and ecodes.KEY_A in caps[ecodes.EV_KEY]:
-                        devs.append(d)
-                except Exception:
-                    pass
         if not devs:
             print("[lautschrift] no keyboard found (is the user in the "
                   "'input' group?)", flush=True)
@@ -275,7 +287,11 @@ class Daemon:
         while True:
             for key, _ in sel.select():
                 for ev in key.fileobj.read():
-                    if ev.type == ecodes.EV_KEY and ev.code == TRIGGER_CODE and ev.value == 1:
+                    if ev.type != ecodes.EV_KEY or ev.value != 1:
+                        continue
+                    if ev.code == ecodes.KEY_ESC:
+                        GLib.idle_add(self.cancel)
+                    elif ev.code == TRIGGER_CODE:
                         now = time.monotonic()
                         if now - last < 0.3:  # debounce
                             continue
@@ -284,6 +300,8 @@ class Daemon:
 
     # ---- Toggle ----
     def toggle(self) -> bool:
+        if self.processing:
+            return False
         if not self.recording:
             self._start()
         else:
@@ -292,42 +310,74 @@ class Daemon:
 
     def _start(self) -> None:
         try:
-            cmd = record_command(str(WAV))
+            cmd = record_command(str(RUNTIME / f"rec-{self.session + 1}.wav"))
         except FileNotFoundError as e:
             self._notify(f"⚠️  {e}")
             return
+        self.session += 1
+        self.wav = RUNTIME / f"rec-{self.session}.wav"
         self.recording = True
-        self.stop_flag.clear()
+        self.stop_flag = threading.Event()
         play_sound(SOUND_START)
-        WAV.unlink(missing_ok=True)
+        self.wav.unlink(missing_ok=True)
         self.rec_proc = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         self.overlay.show_recording()
-        self.decode_thread = threading.Thread(target=self._live_decode, daemon=True)
+        self.decode_thread = threading.Thread(target=self._live_decode,
+                                              args=(self.session, self.stop_flag, self.wav),
+                                              daemon=True)
         self.decode_thread.start()
 
     def _stop(self) -> None:
         self.recording = False
+        self.processing = True
         self.stop_flag.set()
         play_sound(SOUND_STOP)
         # Keep the overlay visible and switch to "Transcribing …" (spinner)
         self.overlay.show_processing()
+        self._stop_recorder()
+        # Read before another session can replace or remove its recording.
+        try:
+            with wave.open(str(self.wav), "rb") as wf:
+                frames = wf.readframes(wf.getnframes())
+            samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        except (OSError, EOFError, wave.Error):
+            samples = self._read_samples(self.wav)
+        self.wav.unlink(missing_ok=True)
+        threading.Thread(target=self._finalize, args=(self.session, samples),
+                         daemon=True).start()
+
+    def _stop_recorder(self) -> None:
         if self.rec_proc:
             try:
                 self.rec_proc.send_signal(signal.SIGINT)
                 self.rec_proc.wait(timeout=3)
-            except Exception:
-                pass
-            self.rec_proc = None
-        # Final decode in its own thread (does not block GTK -> spinner runs)
-        threading.Thread(target=self._finalize, daemon=True).start()
+            except subprocess.TimeoutExpired:
+                self.rec_proc.kill()
+                self.rec_proc.wait()
+            finally:
+                self.rec_proc = None
+
+    def cancel(self) -> bool:
+        if not (self.recording or self.processing):
+            return False
+        self.session += 1  # invalidate queued live updates and final results
+        self.recording = False
+        self.processing = False
+        self.stop_flag.set()
+        self.overlay.hide()
+        self._stop_recorder()
+        self.wav.unlink(missing_ok=True)
+        play_sound(SOUND_STOP)
+        print("[lautschrift] cancelled.", flush=True)
+        return False
 
     # ---- Live decoding ----
     @staticmethod
-    def _read_samples() -> np.ndarray:
+    def _read_samples(wav: Path) -> np.ndarray:
         try:
-            raw = WAV.read_bytes()
+            raw = wav.read_bytes()
         except FileNotFoundError:
             return np.zeros(0, np.float32)
         if len(raw) <= 44:
@@ -337,44 +387,50 @@ class Daemon:
             pcm = pcm[:-1]
         return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
-    def _live_decode(self) -> None:
-        while not self.stop_flag.is_set():
-            time.sleep(DECODE_INTERVAL)
-            if self.stop_flag.is_set():
-                break
-            samples = self._read_samples()
-            if samples.size < SAMPLE_RATE // 4:  # ignore <0.25 s
+    def _live_decode(self, session: int, stop_flag: threading.Event,
+                     wav: Path) -> None:
+        while not stop_flag.wait(DECODE_INTERVAL):
+            samples = self._read_samples(wav)
+            if samples.size < SAMPLE_RATE // 4:
                 continue
             text = self.engine.decode(samples)
-            GLib.idle_add(self.overlay.set_text, text)
+            GLib.idle_add(self._update_text, session, text)
 
-    def _finalize(self) -> None:
-        # Read the cleanly finalized file
-        samples = np.zeros(0, np.float32)
-        try:
-            with wave.open(str(WAV), "rb") as wf:
-                rate = wf.getframerate()
-                frames = wf.readframes(wf.getnframes())
-            samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-        except Exception:
-            samples = self._read_samples()
+    def _update_text(self, session: int, text: str) -> bool:
+        if session == self.session and self.recording:
+            self.overlay.set_text(text)
+        return False
+
+    def _finalize(self, session: int, samples: np.ndarray) -> None:
         text = self.engine.decode(samples)
+        GLib.idle_add(self._finish, session, text)
+
+    def _finish(self, session: int, text: str) -> bool:
+        if session != self.session or not self.processing:
+            return False
+        self.overlay.hide()
         if not text:
-            GLib.idle_add(self.overlay.hide)
+            self.processing = False
             self._notify("⚠️  Nothing recognized.")
-            return
+            return False
+        # Allow the compositor to hide the overlay, and Escape to cancel
+        # even after decoding, before touching the clipboard or pasting.
+        GLib.timeout_add(200, self._deliver, session, text)
+        return False
+
+    def _deliver(self, session: int, text: str) -> bool:
+        if session != self.session or not self.processing:
+            return False
+        self.processing = False
         out = text + (" " if TRAILING_SPACE else "")
-        # 1) Clipboard (clipboard + primary) — exact Unicode text
         try:
             subprocess.run(["wl-copy"], input=out.encode(), check=False)
             subprocess.run(["wl-copy", "--primary"], input=out.encode(), check=False)
         except FileNotFoundError:
             pass
-        # 2) Hide the overlay (focus returns to the target field), then paste
-        GLib.idle_add(self.overlay.hide)
-        time.sleep(0.2)
         self._paste()
         print(f"[lautschrift] -> {text}", flush=True)
+        return False
 
     @staticmethod
     def _ydotoold_alive() -> bool:

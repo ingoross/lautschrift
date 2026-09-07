@@ -16,6 +16,11 @@ language detection) running on the CPU via [`sherpa-onnx`](https://github.com/k2
 **hotkey again** → recording stops, the final text lands in the clipboard and
 is pasted into the currently focused field.
 
+Press **Escape** to cancel a recording or pending transcription. The overlay
+closes and the text is discarded, leaving the clipboard untouched. Escape
+is observed globally and still reaches the focused application.
+The overlay stays above normal windows without taking keyboard focus.
+
 The default hotkey is the **Copilot key** (it sends `Meta+Shift+F23`; we
 trigger on `KEY_F23`, code 193). Any key works — see
 [Configuration](#configuration).
@@ -53,7 +58,7 @@ journalctl --user -u lautschrift -f # logs
 <summary>Manual installation (any distro)</summary>
 
 1. Install: `wl-clipboard`, `ydotool`, PipeWire CLI tools (`pw-record`/`pw-play`)
-   or PulseAudio utils, GTK4 + PyGObject, a freedesktop sound theme.
+   or PulseAudio utils, GTK3 + PyGObject, XWayland, a freedesktop sound theme.
 2. Put your user in the `input` group (evdev hotkey):
    `sudo usermod -aG input "$USER"` — then re-login.
 3. Make `/dev/uinput` writable for the `input` group (ydotool paste injection):
@@ -92,7 +97,7 @@ Why these building blocks — the hard parts of system-wide Wayland dictation:
 | Microphone | `pw-record` (fallback: `parecord`) | native on every modern distro |
 | Global hotkey | `evdev` (group `input`) | works OS-wide, independent of the compositor |
 | Text insertion | clipboard + `ydotool` paste | GNOME offers no `virtual-keyboard` protocol (wtype fails); `ydotool type` mangles non-US layouts (umlauts, y/z) → paste raw keycodes `Ctrl+V` instead, layout-independent |
-| Overlay | GTK4 window | GNOME has no `layer-shell` |
+| Overlay | GTK3 window via XWayland | Keep-above and no keyboard focus; GNOME has no `layer-shell` |
 
 ## Helper scripts
 
@@ -120,8 +125,8 @@ Why these building blocks — the hard parts of system-wide Wayland dictation:
 
 - No true streaming: the offline Parakeet model re-decodes the running
   buffer periodically (feels live, but slows down on very long dictations).
-- The overlay position cannot be freely set on GNOME Wayland (the
-  compositor decides).
+- The overlay requires XWayland (`DISPLAY`) and GTK3. Clipboard and text
+  insertion still require a Wayland session.
 - Wayland only — on X11 sessions, clipboard and paste injection are not wired up.
 
 ## License & attribution

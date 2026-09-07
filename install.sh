@@ -22,26 +22,26 @@ NEED_RELOGIN=0
 if command -v dnf >/dev/null 2>&1; then
     say "Installing system packages (dnf) …"
     sudo dnf install -y wl-clipboard ydotool pipewire-utils \
-        python3 python3-gobject gtk4 sound-theme-freedesktop
+        python3 python3-gobject gtk3 xorg-x11-server-Xwayland sound-theme-freedesktop
 elif command -v apt-get >/dev/null 2>&1; then
     say "Installing system packages (apt) …"
     sudo apt-get update
     sudo apt-get install -y wl-clipboard ydotool pipewire-bin \
-        python3 python3-venv python3-gi gir1.2-gtk-4.0 libgtk-4-1 \
+        python3 python3-venv python3-gi gir1.2-gtk-3.0 libgtk-3-0 xwayland \
         sound-theme-freedesktop
 elif command -v pacman >/dev/null 2>&1; then
     say "Installing system packages (pacman) …"
     sudo pacman -S --needed --noconfirm wl-clipboard ydotool pipewire \
-        python python-gobject gtk4 sound-theme-freedesktop
+        python python-gobject gtk3 xorg-xwayland sound-theme-freedesktop
 elif command -v zypper >/dev/null 2>&1; then
     say "Installing system packages (zypper) …"
     sudo zypper --non-interactive install wl-clipboard ydotool pipewire-tools \
-        python3 python3-gobject typelib-1_0-Gtk-4_0 libgtk-4-1 \
+        python3 python3-gobject typelib-1_0-Gtk-3_0 libgtk-3-0 xwayland \
         sound-theme-freedesktop
 else
     warn "Unknown package manager — please install these yourself:"
     warn "  wl-clipboard, ydotool, PipeWire CLI tools (pw-record/pw-play),"
-    warn "  GTK4 + PyGObject, Python 3.10+, freedesktop sound theme"
+    warn "  GTK3 + PyGObject, XWayland, Python 3.10+, freedesktop sound theme"
 fi
 
 # --- 2. Permissions: 'input' group + /dev/uinput ------------------------------
