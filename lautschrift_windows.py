@@ -113,19 +113,31 @@ class Overlay(QWidget):
         self.text.setTextFormat(Qt.PlainText)
         self.text.setWordWrap(True)
         self.level = QProgressBar()
-        self.level.setRange(0, 60)
-        self.level.setValue(0)
-        self.level.setFormat("Mikrofon: noch kein Signal")
-        self.level.setStyleSheet("QProgressBar {border: 1px solid #46516a; border-radius: 4px; text-align: center; font-size: 12px; height: 20px;} QProgressBar::chunk {background: #357d67;}")
+        self.level.setRange(0, 1000)
+        self.level.setTextVisible(False)
+        self.level.setFixedHeight(4)
+        self.level.setAccessibleName("Mikrofonpegel")
+        self.level.setStyleSheet("QProgressBar {border: none; border-radius: 2px; background: #232c38;} QProgressBar::chunk {background: #48665f; border-radius: 2px;}")
+        self.reset_level()
         self.hint = QLabel("Strg+Leertaste: fertig  ·  Esc: verwerfen")
         self.hint.setStyleSheet("font-size: 12px; color: #99a5bb;")
         for widget in (self.heading, self.text, self.level, self.hint):
             layout.addWidget(widget)
 
+    def reset_level(self):
+        self._level_value = 0.0
+        self._level_time = time.monotonic()
+        self.level.setValue(0)
+
     def set_level(self, peak):
-        db = 20 * np.log10(max(peak, 1e-8))
-        self.level.setValue(int(np.clip(db + 60, 0, 60)))
-        self.level.setFormat(f"Mikrofon: {db:.0f} dBFS" if peak else "Mikrofon: kein Signal")
+        # Smooth attack and slower release keep individual audio blocks from flashing.
+        now = time.monotonic()
+        elapsed = min(now - self._level_time, 0.1)
+        self._level_time = now
+        target = float(np.clip((20 * np.log10(max(peak, 1e-8)) + 60) / 60, 0, 1))
+        smoothing = 0.18 if target > self._level_value else 0.55
+        self._level_value += (target - self._level_value) * (1 - np.exp(-elapsed / smoothing))
+        self.level.setValue(round(self._level_value * 1000))
 
     def display(self, heading, text=None):
         self.heading.setText(heading)
@@ -264,7 +276,7 @@ class Dictation:
         self.session += 1
         self.target = user32.GetForegroundWindow()
         self.recorder = recorder
-        self.overlay.set_level(0)
+        self.overlay.reset_level()
         self.last_decode = time.monotonic()
         self.set_state("recording")
         self.overlay.display("● Aufnahme läuft", "Jetzt sprechen …")

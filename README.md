@@ -46,7 +46,7 @@ Ein bestehendes Modell wird wiederverwendet. Administratorrechte sind nicht nöt
 - **Esc:** laufende Aufnahme oder ausstehende Erkennung verwerfen; die Zwischenablage bleibt unverändert.
 - **Taskleistensymbol:** Status, Aufnahme, Abbruch, Einfügetastenkombination und Beenden.
 - Das Live-Overlay bleibt im Vordergrund, ohne den Tastaturfokus zu übernehmen.
-- Eine Live-Pegelanzeige zeigt das Mikrofonsignal in dBFS; bei sehr schwachem
+- Eine schmale, geglättete Pegellinie zeigt das Mikrofonsignal ohne wechselnde Zahlen; bei sehr schwachem
   Eingangssignal und leerem Erkennungsergebnis erscheint ein Hinweis zur Mikrofonprüfung.
 - Nach maximal 120 Sekunden wird eine Aufnahme automatisch beendet und erkannt.
 - Bei einem Fensterwechsel während des Diktats wird der Text nur kopiert;
