@@ -1,9 +1,13 @@
 """Cancellation must invalidate work already queued by the decoder."""
 import threading
 import unittest
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
+
+if sys.platform == "win32":
+    raise unittest.SkipTest("Linux/GTK implementation; Windows coverage is in test_windows.py")
 
 import lautschrift as laut
 

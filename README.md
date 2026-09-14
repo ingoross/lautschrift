@@ -1,6 +1,6 @@
 # Lautschrift
 
-**Local, fully offline speech-to-text dictation for Linux / Wayland.**
+**Local, fully offline speech-to-text dictation for Linux / Wayland and Windows.**
 Press a hotkey, speak, press again — the text is pasted into whatever field
 has focus, system-wide, in any app. No cloud, no API keys, no telemetry.
 
@@ -9,6 +9,88 @@ has focus, system-wide, in any app. No cloud, no API keys, no telemetry.
 Powered by **NVIDIA Parakeet TDT 0.6B v3** (25 European languages, automatic
 language detection) running on the CPU via [`sherpa-onnx`](https://github.com/k2-fsa/sherpa-onnx)
 (ONNX, int8).
+
+## Windows
+
+Die native Windows-Version verwendet dieselbe Offline-Spracherkennung, mit
+Windows-Hotkeys, Mikrofonaufnahme über PortAudio und einer Qt-Oberfläche.
+Linux bleibt über `lautschrift.py` und `install.sh` verfügbar; die folgenden
+Linux-Abschnitte beschreiben weiterhin diese Variante.
+
+![Windows-Overlay](docs/windows-overlay.png)
+
+### Installation und Start
+
+Windows 10/11 x64, Python 3.12 oder 3.13 (64 Bit) und ein Mikrofon werden benötigt.
+Git installieren und in PowerShell ausführen (bei vorhandenem Klon direkt
+in dessen Projektordner wechseln):
+
+```powershell
+git clone https://github.com/ingoross/lautschrift.git
+cd lautschrift
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1
+.\start-windows.cmd
+```
+
+Das Setup erstellt `.venv`, installiert die Pakete aus `requirements-windows.txt`
+und lädt einmalig das Parakeet-Modell (~465 MB). Danach arbeitet das Diktat offline.
+Bei einem Python außerhalb des Suchpfads: `-Python C:\Pfad\python.exe` angeben.
+Ein bestehendes Modell wird wiederverwendet. Administratorrechte sind nicht nötig.
+
+### Bedienung
+
+- **Strg+Leertaste:** Aufnahme starten, erneut drücken zum Erkennen und Einfügen.
+- **Copilot-Taste / F23:** ebenfalls verfügbar, sofern Windows die Tastenkombination freigibt.
+- **Esc:** laufende Aufnahme oder ausstehende Erkennung verwerfen; die Zwischenablage bleibt unverändert.
+- **Taskleistensymbol:** Status, Aufnahme, Abbruch, Einfügetastenkombination und Beenden.
+- Das Live-Overlay bleibt im Vordergrund, ohne den Tastaturfokus zu übernehmen.
+- Eine Live-Pegelanzeige zeigt das Mikrofonsignal in dBFS; bei sehr schwachem
+  Eingangssignal und leerem Erkennungsergebnis erscheint ein Hinweis zur Mikrofonprüfung.
+- Nach maximal 120 Sekunden wird eine Aufnahme automatisch beendet und erkannt.
+- Bei einem Fensterwechsel während des Diktats wird der Text nur kopiert;
+  eine Meldung weist auf manuelles Einfügen hin.
+
+Standardmäßig wird **Strg+V** zum Einfügen verwendet. Im Menü kann für Terminals
+**Strg+Umschalt+V** oder **Umschalt+Einfügen** gewählt werden. Windows kann das
+Einfügen in Programme mit höheren Rechten blockieren; dann manuell einfügen.
+Nicht jede Zielanwendung unterstützt jede Tastenkombination.
+
+### Einstellungen und Diagnose
+
+Die Windows-Version berücksichtigt `LAUT_MODEL_DIR`, `LAUT_THREADS`,
+`LAUT_DECODE_INTERVAL`, `LAUT_TRAILING_SPACE` und `LAUT_PASTE_KEY`.
+`LAUT_INPUT_DEVICE` wählt eine Mikrofon-ID oder einen eindeutigen Gerätenamen.
+Diese Variablen vor dem Start in PowerShell setzen, zum Beispiel:
+
+```powershell
+.\.venv\Scripts\python.exe lautschrift_windows.py --list-devices
+$env:LAUT_INPUT_DEVICE = '1'
+$env:LAUT_PASTE_KEY = 'ctrl+v'
+.\start-windows.cmd
+```
+
+Ohne Geräteauswahl wird das Windows-Standardmikrofon verwendet. Falls ein
+Audiotreiber das Öffnen verweigert, werden die Standard-Eingänge der anderen
+Windows-Audioschnittstellen versucht. Mikrofonzugriff
+für Desktop-Apps muss in den Windows-Datenschutzeinstellungen erlaubt sein.
+Die Aufnahme bleibt im RAM; Diktattexte werden nicht in die Logdatei geschrieben.
+Fehlerprotokoll: `%LOCALAPPDATA%\Lautschrift\lautschrift.log`.
+
+```powershell
+# Modell laden und Audioeinstellungen prüfen, ohne aufzunehmen:
+.\.venv\Scripts\python.exe lautschrift_windows.py --check
+# Tests für Abbruch, Einfügen, Fensterwechsel und Fehlerbehandlung:
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_windows.py -v
+```
+
+Die Windows-Variante startet derzeit über Python, nicht als eigenständiges EXE-Paket.
+Ein Autostart wird nicht automatisch eingerichtet. Die Linux-Variablen
+`LAUT_TRIGGER_CODE` und `LAUT_SOUND_*` gelten für diese Variante nicht.
+
+Technische Referenzen: [sherpa-onnx Python / Windows](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/python/install.rst),
+[PortAudio-Installation unter Windows](https://github.com/spatialaudio/python-sounddevice/blob/master/doc/installation.rst),
+[Windows-Hotkeys](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey),
+[Windows-Eingabesimulation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
 
 ## How it works
 
