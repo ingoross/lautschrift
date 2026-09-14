@@ -13,6 +13,7 @@ import queue
 import sys
 import threading
 import time
+import winsound
 
 import numpy as np
 import sounddevice as sd
@@ -24,6 +25,18 @@ from stt import Engine
 from windows_native import key_down, modifiers_down, paste, user32
 
 LOG = logging.getLogger("lautschrift")
+
+
+def play_cue(kind):
+    """Play a short WAV without blocking the UI or relying on a system sound theme."""
+    path = os.environ.get(f"LAUT_SOUND_{kind.upper()}",
+                          str(Path(__file__).resolve().parent / "sounds" / f"{kind}.wav"))
+    if not path:
+        return
+    try:
+        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+    except (RuntimeError, OSError):
+        LOG.warning("Could not play %s sound: %s", kind, path, exc_info=True)
 
 
 class Recorder:
@@ -255,6 +268,7 @@ class Dictation:
         self.last_decode = time.monotonic()
         self.set_state("recording")
         self.overlay.display("● Aufnahme läuft", "Jetzt sprechen …")
+        play_cue("start")
 
     def stop(self):
         recorder, self.recorder = self.recorder, None
@@ -270,6 +284,7 @@ class Dictation:
             self.notify(str(exc))
             return
         self.set_state("processing")
+        play_cue("stop")
         self.overlay.display("Text wird erkannt …")
         self.submit("final", self.session, self.engine.decode, samples, recorder.rate)
 

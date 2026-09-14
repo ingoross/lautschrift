@@ -41,6 +41,37 @@ class WindowsTests(unittest.TestCase):
         self.mocks = [p.start() for p in self.patchers]
         self.mocks[-1].GetForegroundWindow.return_value = 42
         self.addCleanup(patch.stopall)
+        self.cue = patch.object(laut, "play_cue").start()
+
+    def test_start_cue_only_after_microphone_is_ready(self):
+        d = self.d
+        d.device = None
+        with patch.object(laut, "Recorder") as recorder:
+            d.start()
+        recorder.return_value.start.assert_called_once()
+        self.cue.assert_called_once_with("start")
+        self.assertEqual(d.state, "recording")
+
+    def test_failed_microphone_does_not_play_start_cue(self):
+        self.d.device = None
+        with patch.object(laut, "Recorder", side_effect=RuntimeError("no microphone")):
+            self.d.start()
+        self.cue.assert_not_called()
+
+    def test_stop_cue_after_audio_is_closed_before_decode(self):
+        d = self.d
+        d.recorder.problem = ""
+        d.recorder.rate = 16000
+        d.recorder.snapshot.return_value = np.zeros(100, np.float32)
+        d.engine = Mock()
+        d.submit = Mock()
+        order = Mock()
+        order.attach_mock(d.recorder.close, "close")
+        order.attach_mock(self.cue, "sound")
+        order.attach_mock(d.submit, "decode")
+        d.stop()
+        self.assertEqual([c[0] for c in order.mock_calls], ["close", "sound", "decode"])
+        self.cue.assert_called_once_with("stop")
 
     def test_native_input_structure_matches_windows_abi(self):
         self.assertEqual(ctypes.sizeof(INPUT), 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28)

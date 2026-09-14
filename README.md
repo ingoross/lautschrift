@@ -40,6 +40,8 @@ Ein bestehendes Modell wird wiederverwendet. Administratorrechte sind nicht nöt
 ### Bedienung
 
 - **Strg+Leertaste:** Aufnahme starten, erneut drücken zum Erkennen und Einfügen.
+- Ein kurzer aufsteigender Ton bestätigt den Aufnahmebeginn; ein absteigender
+  Ton bestätigt das Aufnahmeende, bevor der Text fertig erkannt und eingefügt wird.
 - **Copilot-Taste / F23:** ebenfalls verfügbar, sofern Windows die Tastenkombination freigibt.
 - **Esc:** laufende Aufnahme oder ausstehende Erkennung verwerfen; die Zwischenablage bleibt unverändert.
 - **Taskleistensymbol:** Status, Aufnahme, Abbruch, Einfügetastenkombination und Beenden.
@@ -84,8 +86,10 @@ Fehlerprotokoll: `%LOCALAPPDATA%\Lautschrift\lautschrift.log`.
 ```
 
 Die Windows-Variante startet derzeit über Python, nicht als eigenständiges EXE-Paket.
-Ein Autostart wird nicht automatisch eingerichtet. Die Linux-Variablen
-`LAUT_TRIGGER_CODE` und `LAUT_SOUND_*` gelten für diese Variante nicht.
+Ein Autostart wird nicht automatisch eingerichtet. `LAUT_TRIGGER_CODE` gilt nur für Linux.
+`LAUT_SOUND_START` und `LAUT_SOUND_STOP` können unter Windows eigene WAV-Dateien
+angeben; eine leere Zeichenfolge deaktiviert den jeweiligen Ton. Die mitgelieferten
+Töne benötigen kein aktiviertes Windows-Systemklangschema.
 
 Technische Referenzen: [sherpa-onnx Python / Windows](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/python/install.rst),
 [PortAudio-Installation unter Windows](https://github.com/spatialaudio/python-sounddevice/blob/master/doc/installation.rst),
