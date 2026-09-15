@@ -28,9 +28,9 @@ _sounds = []  # keep NSSound objects alive until playback ends
 
 
 def play_cue(kind):
-    """Play a short WAV without blocking the UI."""
+    """Play a short, quiet WAV without blocking the UI (softer variants than Windows)."""
     path = os.environ.get(f"LAUT_SOUND_{kind.upper()}",
-                          str(Path(__file__).resolve().parent / "sounds" / f"{kind}.wav"))
+                          str(Path(__file__).resolve().parent / "sounds" / f"{kind}-soft.wav"))
     if not path:
         return
     try:

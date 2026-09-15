@@ -48,7 +48,7 @@ kann **Cmd+Umschalt+V** gewählt werden (`LAUT_PASTE_KEY=cmd+shift+v`).
 
 `LAUT_MODEL_DIR`, `LAUT_THREADS`, `LAUT_DECODE_INTERVAL`, `LAUT_TRAILING_SPACE`,
 `LAUT_PASTE_KEY`, `LAUT_INPUT_DEVICE`, `LAUT_SOUND_START` / `LAUT_SOUND_STOP`
-gelten wie unter Windows. Log: `~/Library/Application Support/Lautschrift/lautschrift.log`.
+gelten wie unter Windows. Der Mac nutzt standardmäßig die leiseren Töne `sounds/*-soft.wav`. Log: `~/Library/Application Support/Lautschrift/lautschrift.log`.
 
 ```bash
 .venv/bin/python lautschrift_mac.py --list-devices
