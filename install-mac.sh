@@ -18,6 +18,7 @@ if [ ! -x .venv/bin/python ]; then
     "$PY" -m venv .venv
 fi
 say "Installing Python packages …"
+.venv/bin/python -m pip --version >/dev/null 2>&1 || .venv/bin/python -m ensurepip --upgrade >/dev/null
 .venv/bin/python -m pip install --quiet --upgrade pip
 .venv/bin/python -m pip install --quiet -r requirements-mac.txt
 say "Downloading model (skipped if present) …"
