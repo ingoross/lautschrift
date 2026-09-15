@@ -1,6 +1,6 @@
 # Lautschrift
 
-**Local, fully offline speech-to-text dictation for Linux / Wayland and Windows.**
+**Local, fully offline speech-to-text dictation for Linux / Wayland, Windows and macOS.**
 Press a hotkey, speak, press again — the text is pasted into whatever field
 has focus, system-wide, in any app. No cloud, no API keys, no telemetry.
 
@@ -9,6 +9,61 @@ has focus, system-wide, in any app. No cloud, no API keys, no telemetry.
 Powered by **NVIDIA Parakeet TDT 0.6B v3** (25 European languages, automatic
 language detection) running on the CPU via [`sherpa-onnx`](https://github.com/k2-fsa/sherpa-onnx)
 (ONNX, int8).
+
+## macOS
+
+Die native Mac-Version nutzt dieselbe Offline-Spracherkennung mit einem
+systemweiten Hotkey (CGEventTap), Mikrofonaufnahme über PortAudio/CoreAudio,
+Einfügen per Cmd+V und einem Menüleistensymbol (Qt). Apple Silicon und Intel.
+
+### Installation und Start
+
+macOS 13+, Python 3.12 oder 3.13 (z. B. `brew install python@3.13`) und ein Mikrofon.
+
+```bash
+git clone https://github.com/ingoross/lautschrift.git && cd lautschrift
+./install-mac.sh              # venv, Pakete aus requirements-mac.txt, Modell (~465 MB)
+./start-mac.sh                # manuell starten, oder:
+./install-mac.sh --service    # Autostart per launchd-Agent (de.unfuture.lautschrift)
+```
+
+Beim ersten Start fragt macOS nach Berechtigungen für **Python** unter
+*Systemeinstellungen → Datenschutz & Sicherheit*: **Bedienungshilfen** (Hotkey und
+Einfügen), ggf. **Eingabeüberwachung** und **Mikrofon**. Nach dem Erteilen neu starten.
+Bei Start aus einem Terminal wird die Mikrofonfreigabe dem Terminal zugeordnet.
+
+### Bedienung
+
+- **Option+Leertaste (⌥ Space):** Aufnahme starten, erneut drücken zum Erkennen und
+  Einfügen. Die Tastenkombination wird abgefangen, es landet kein geschütztes Leerzeichen im Text.
+- **Esc:** laufende Aufnahme oder ausstehende Erkennung verwerfen.
+- **Menüleistensymbol:** Status, Aufnahme, Abbruch, Einfügetastenkombination, Beenden.
+- Start-/Stopp-Ton, Live-Overlay mit Pegellinie, Auto-Stopp nach 120 Sekunden und
+  Verhalten bei App-Wechsel wie in der Windows-Version.
+
+Standardmäßig wird **Cmd+V** eingefügt; für Terminals mit abweichender Belegung
+kann **Cmd+Umschalt+V** gewählt werden (`LAUT_PASTE_KEY=cmd+shift+v`).
+
+### Einstellungen und Diagnose
+
+`LAUT_MODEL_DIR`, `LAUT_THREADS`, `LAUT_DECODE_INTERVAL`, `LAUT_TRAILING_SPACE`,
+`LAUT_PASTE_KEY`, `LAUT_INPUT_DEVICE`, `LAUT_SOUND_START` / `LAUT_SOUND_STOP`
+gelten wie unter Windows. Log: `~/Library/Application Support/Lautschrift/lautschrift.log`.
+
+```bash
+.venv/bin/python lautschrift_mac.py --list-devices
+.venv/bin/python lautschrift_mac.py --check      # Modell, Mikrofon, Bedienungshilfen-Freigabe
+.venv/bin/python -m unittest discover -s tests -p test_mac.py -v
+```
+
+Fehlersuche:
+- **Hotkey reagiert nicht** — Bedienungshilfen-Freigabe für Python prüfen; außerdem
+  hängendes *Secure Keyboard Entry* (z. B. Ghostty, Terminal) blockiert alle
+  Event-Taps: `ioreg -l -d 1 -w 0 | grep -o 'kCGSSessionSecureInputPID"=[0-9]*'` muss leer sein.
+- **Andere Diktat-Apps** (FluidVoice, superwhisper) mit derselben Tastenkombination
+  vorher beenden oder umbelegen, sonst reagieren beide.
+- **Text nur in der Zwischenablage** — Einfügen wurde blockiert oder während der
+  Erkennung wurde die App gewechselt; manuell mit Cmd+V einfügen.
 
 ## Windows
 

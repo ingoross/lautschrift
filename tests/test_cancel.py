@@ -6,8 +6,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-if sys.platform == "win32":
-    raise unittest.SkipTest("Linux/GTK implementation; Windows coverage is in test_windows.py")
+if sys.platform != "linux":
+    raise unittest.SkipTest("Linux/GTK implementation; see test_windows.py and test_mac.py")
 
 import lautschrift as laut
 
