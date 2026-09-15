@@ -350,6 +350,7 @@ class Dictation:
             return
         try:
             paste(self.paste_key)
+            LOG.info("Delivered %d characters via %s", len(out), self.paste_key)
         except OSError as exc:
             self.notify(str(exc))
 
