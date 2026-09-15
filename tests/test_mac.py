@@ -104,6 +104,16 @@ class MacTests(unittest.TestCase):
         d.overlay.hide.assert_called()
         self.mocks[2].assert_not_called()
 
+    def test_tick_reenables_disabled_tap(self):
+        d = self.d
+        d.hotkeys = Mock()
+        d.last_watchdog = 0.0
+        d.state = "idle"
+        d.tick()
+        d.hotkeys.ensure_enabled.assert_called_once()
+        d.tick()
+        d.hotkeys.ensure_enabled.assert_called_once()
+
     def test_hotkey_event_toggles_on_qt_thread(self):
         d = self.d
         d.state = "idle"

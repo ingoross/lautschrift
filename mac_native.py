@@ -127,6 +127,13 @@ class HotkeyTap:
             self.ready.set()
         Quartz.CFRunLoopRun()
 
+    def ensure_enabled(self):
+        """macOS silently disables a tap whose callback stalls (e.g. GIL held during model load
+        under heavy system load). Re-enable from a periodic check so the hotkey never stays dead."""
+        if self.tap is not None and not Quartz.CGEventTapIsEnabled(self.tap):
+            LOG.warning("Event tap found disabled; re-enabling")
+            Quartz.CGEventTapEnable(self.tap, True)
+
     def close(self):
         if self.tap is not None:
             Quartz.CGEventTapEnable(self.tap, False)

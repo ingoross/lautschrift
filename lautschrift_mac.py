@@ -167,6 +167,7 @@ class Dictation:
         self.live_pending = False
         self.last_decode = 0
         self.target = None
+        self.last_watchdog = 0.0
         self.events = queue.Queue()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="parakeet")
         self.interval = max(0.2, float(os.environ.get("LAUT_DECODE_INTERVAL", "0.8")))
@@ -285,6 +286,9 @@ class Dictation:
         # Observe Escape without reserving it or swallowing it in other apps.
         if key_down(KEY_ESCAPE):
             self.cancel()
+        if self.hotkeys and time.monotonic() - self.last_watchdog >= 1.0:
+            self.last_watchdog = time.monotonic()
+            self.hotkeys.ensure_enabled()
         while not self.events.empty():
             kind, session, result, error = self.events.get_nowait()
             if kind == "hotkey":
